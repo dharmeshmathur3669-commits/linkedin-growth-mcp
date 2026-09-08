@@ -3,43 +3,53 @@ import secrets
 import urllib.parse
 
 import httpx
-from starlette.applications import Starlette
-from starlette.responses import RedirectResponse, HTMLResponse
-from starlette.routing import Route
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, RedirectResponse
 
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
+# ==================================================
+# CONFIGURATION
+# ==================================================
 
 LINKEDIN_CLIENT_ID = os.environ.get("LINKEDIN_CLIENT_ID")
 LINKEDIN_CLIENT_SECRET = os.environ.get("LINKEDIN_CLIENT_SECRET")
 
 BASE_URL = "https://linkedin-growth-mcp.onrender.com"
+
 REDIRECT_URI = f"{BASE_URL}/auth/linkedin/callback"
 
-LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
-LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
-LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
+LINKEDIN_AUTH_URL = (
+    "https://www.linkedin.com/oauth/v2/authorization"
+)
 
-# LinkedIn API version: YYYYMM
+LINKEDIN_TOKEN_URL = (
+    "https://www.linkedin.com/oauth/v2/accessToken"
+)
+
+LINKEDIN_USERINFO_URL = (
+    "https://api.linkedin.com/v2/userinfo"
+)
+
+# Current LinkedIn API version format is YYYYMM.
 LINKEDIN_VERSION = "202609"
 
 
-# --------------------------------------------------
-# Temporary in-memory storage
-# --------------------------------------------------
+# ==================================================
+# TEMPORARY OAUTH STORAGE
+# ==================================================
 
 oauth_state = None
+
 linkedin_access_token = None
+
 linkedin_member_id = None
 
 
-# --------------------------------------------------
-# MCP
-# --------------------------------------------------
+# ==================================================
+# MCP SERVER
+# ==================================================
 
 mcp = FastMCP(
     "LinkedIn Growth MCP",
@@ -51,15 +61,24 @@ mcp = FastMCP(
 )
 
 
+# ==================================================
+# BASIC MCP STATUS TOOL
+# ==================================================
+
 @mcp.tool()
 def linkedin_status() -> dict:
     """Check whether the LinkedIn Growth MCP server is running."""
+
     return {
         "status": "online",
         "service": "LinkedIn Growth MCP",
         "linkedin_connected": linkedin_access_token is not None,
     }
 
+
+# ==================================================
+# CREATE LINKEDIN DRAFT
+# ==================================================
 
 @mcp.tool()
 def create_linkedin_draft(
@@ -71,6 +90,7 @@ def create_linkedin_draft(
 
     This does not publish anything to LinkedIn.
     """
+
     return {
         "topic": topic,
         "goal": goal,
@@ -82,24 +102,38 @@ def create_linkedin_draft(
     }
 
 
+# ==================================================
+# LINKEDIN AUTH STATUS
+# ==================================================
+
 @mcp.tool()
 def linkedin_auth_status() -> dict:
     """Check whether LinkedIn OAuth has been completed."""
+
     return {
         "connected": linkedin_access_token is not None,
         "member_id": linkedin_member_id,
     }
 
 
+# ==================================================
+# PUBLISH LINKEDIN POST
+# ==================================================
+
 @mcp.tool()
 async def linkedin_create_post(text: str) -> dict:
     """
     Publish a text post to the authenticated LinkedIn personal profile.
     """
+
     if not linkedin_access_token or not linkedin_member_id:
+
         return {
             "success": False,
-            "error": "LinkedIn is not connected. Open /auth/linkedin first.",
+            "error": (
+                "LinkedIn is not connected. "
+                "Open /auth/linkedin first."
+            ),
         }
 
     url = "https://api.linkedin.com/rest/posts"
@@ -125,6 +159,7 @@ async def linkedin_create_post(text: str) -> dict:
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
+
         response = await client.post(
             url,
             json=payload,
@@ -132,6 +167,7 @@ async def linkedin_create_post(text: str) -> dict:
         )
 
     if response.status_code in (200, 201):
+
         return {
             "success": True,
             "message": "LinkedIn post published successfully.",
@@ -145,11 +181,13 @@ async def linkedin_create_post(text: str) -> dict:
     }
 
 
-# --------------------------------------------------
-# LinkedIn OAuth
-# --------------------------------------------------
+# ==================================================
+# LINKEDIN LOGIN ROUTE
+# ==================================================
 
-async def linkedin_login(request):
+@mcp.custom_route("/auth/linkedin", methods=["GET"])
+async def linkedin_login(request: Request):
+
     global oauth_state
 
     oauth_state = secrets.token_urlsafe(32)
@@ -162,37 +200,90 @@ async def linkedin_login(request):
         "scope": "openid profile email w_member_social",
     }
 
-    url = f"{LINKEDIN_AUTH_URL}?{urllib.parse.urlencode(params)}"
+    authorization_url = (
+        f"{LINKEDIN_AUTH_URL}?"
+        f"{urllib.parse.urlencode(params)}"
+    )
 
-    return RedirectResponse(url)
+    return RedirectResponse(authorization_url)
 
 
-async def linkedin_callback(request):
+# ==================================================
+# LINKEDIN CALLBACK ROUTE
+# ==================================================
+
+@mcp.custom_route(
+    "/auth/linkedin/callback",
+    methods=["GET"],
+)
+async def linkedin_callback(request: Request):
+
     global oauth_state
     global linkedin_access_token
     global linkedin_member_id
 
     code = request.query_params.get("code")
+
     state = request.query_params.get("state")
+
     error = request.query_params.get("error")
 
+    # ----------------------------------------------
+    # LinkedIn returned an error
+    # ----------------------------------------------
+
     if error:
+
         return HTMLResponse(
-            f"<h2>LinkedIn authorization failed</h2><p>{error}</p>",
+            f"""
+            <html>
+                <body>
+                    <h2>LinkedIn authorization failed</h2>
+                    <p>{error}</p>
+                </body>
+            </html>
+            """,
             status_code=400,
         )
+
+    # ----------------------------------------------
+    # Check authorization code
+    # ----------------------------------------------
 
     if not code:
+
         return HTMLResponse(
-            "<h2>No authorization code received.</h2>",
+            """
+            <html>
+                <body>
+                    <h2>No authorization code received.</h2>
+                </body>
+            </html>
+            """,
             status_code=400,
         )
 
+    # ----------------------------------------------
+    # Check OAuth state
+    # ----------------------------------------------
+
     if state != oauth_state:
+
         return HTMLResponse(
-            "<h2>Invalid OAuth state.</h2>",
+            """
+            <html>
+                <body>
+                    <h2>Invalid OAuth state.</h2>
+                    <p>Please start the LinkedIn connection again.</p>
+                </body>
+            </html>
+            """,
             status_code=400,
         )
+
+    # ----------------------------------------------
+    # Exchange authorization code for access token
+    # ----------------------------------------------
 
     token_data = {
         "grant_type": "authorization_code",
@@ -210,34 +301,62 @@ async def linkedin_callback(request):
         )
 
         if token_response.status_code != 200:
+
             return HTMLResponse(
-                "<h2>Token exchange failed</h2>"
-                f"<pre>{token_response.text[:1000]}</pre>",
+                f"""
+                <html>
+                    <body>
+                        <h2>Token exchange failed</h2>
+                        <pre>{token_response.text[:1000]}</pre>
+                    </body>
+                </html>
+                """,
                 status_code=400,
             )
 
         token_json = token_response.json()
 
-        linkedin_access_token = token_json.get("access_token")
+        linkedin_access_token = token_json.get(
+            "access_token"
+        )
 
         if not linkedin_access_token:
+
             return HTMLResponse(
-                "<h2>No access token received.</h2>",
+                """
+                <html>
+                    <body>
+                        <h2>No access token received.</h2>
+                    </body>
+                </html>
+                """,
                 status_code=400,
             )
 
+        # ------------------------------------------
         # Get LinkedIn member information
+        # ------------------------------------------
+
         userinfo_response = await client.get(
             LINKEDIN_USERINFO_URL,
             headers={
-                "Authorization": f"Bearer {linkedin_access_token}",
+                "Authorization": (
+                    f"Bearer {linkedin_access_token}"
+                ),
             },
         )
 
         if userinfo_response.status_code != 200:
+
             return HTMLResponse(
-                "<h2>Could not retrieve LinkedIn profile.</h2>"
-                f"<pre>{userinfo_response.text[:1000]}</pre>",
+                f"""
+                <html>
+                    <body>
+                        <h2>Could not retrieve LinkedIn profile.</h2>
+                        <pre>{userinfo_response.text[:1000]}</pre>
+                    </body>
+                </html>
+                """,
                 status_code=400,
             )
 
@@ -245,63 +364,84 @@ async def linkedin_callback(request):
 
     linkedin_member_id = userinfo.get("sub")
 
+    # ----------------------------------------------
+    # Successful connection
+    # ----------------------------------------------
+
     return HTMLResponse(
         """
         <html>
+
             <head>
                 <title>LinkedIn Connected</title>
             </head>
+
             <body>
+
                 <h1>✅ LinkedIn Connected Successfully</h1>
-                <p>Your LinkedIn account has been connected to the MCP.</p>
-                <p>You can close this page now.</p>
+
+                <p>
+                    Your LinkedIn account has been connected
+                    to the LinkedIn Growth MCP.
+                </p>
+
+                <p>
+                    You can close this page now.
+                </p>
+
             </body>
+
         </html>
         """
     )
 
 
-async def linkedin_home(request):
+# ==================================================
+# HOME / HEALTH ROUTE
+# ==================================================
+
+@mcp.custom_route("/", methods=["GET"])
+async def home(request: Request):
+
     return HTMLResponse(
         """
         <html>
+
             <head>
                 <title>LinkedIn Growth MCP</title>
             </head>
+
             <body>
+
                 <h1>LinkedIn Growth MCP</h1>
-                <p>Server is running.</p>
+
+                <p>✅ Server is running.</p>
+
                 <p>
                     <a href="/auth/linkedin">
                         Connect LinkedIn
                     </a>
                 </p>
+
             </body>
+
         </html>
         """
     )
 
 
-# --------------------------------------------------
-# Web application
-# --------------------------------------------------
-
-routes = [
-    Route("/", linkedin_home),
-    Route("/auth/linkedin", linkedin_login),
-    Route("/auth/linkedin/callback", linkedin_callback),
-]
-
-
-app = Starlette(routes=routes)
-
-
-# --------------------------------------------------
-# Start MCP server
-# --------------------------------------------------
+# ==================================================
+# START SERVER
+# ==================================================
 
 if __name__ == "__main__":
-    mcp.settings.host = "0.0.0.0"
-    mcp.settings.port = int(os.environ.get("PORT", 8000))
 
-    mcp.run(transport="streamable-http")
+    mcp.settings.host = "0.0.0.0"
+
+    mcp.settings.port = int(
+        os.environ.get("PORT", 8000)
+    )
+
+    mcp.run(
+        transport="streamable-http"
+    )
