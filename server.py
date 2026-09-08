@@ -46,11 +46,4 @@ if __name__ == "__main__":
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = int(os.environ.get("PORT", 8000))
 
-    # Render/remote MCP host
-    mcp.settings.http_allowed_hosts = [
-        "localhost",
-        "127.0.0.1",
-        "linkedin-growth-mcp.onrender.com",
-    ]
-
     mcp.run(transport="streamable-http")
