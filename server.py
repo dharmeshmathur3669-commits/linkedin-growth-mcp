@@ -33,7 +33,7 @@ LINKEDIN_USERINFO_URL = (
     "https://api.linkedin.com/v2/userinfo"
 )
 
-LINKEDIN_VERSION = "202609"
+LINKEDIN_VERSION = "202608"
 
 
 # ==================================================
