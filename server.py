@@ -5,6 +5,7 @@ import urllib.parse
 import httpx
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
@@ -32,12 +33,11 @@ LINKEDIN_USERINFO_URL = (
     "https://api.linkedin.com/v2/userinfo"
 )
 
-# Current LinkedIn API version format is YYYYMM.
 LINKEDIN_VERSION = "202609"
 
 
 # ==================================================
-# TEMPORARY OAUTH STORAGE
+# TEMPORARY LINKEDIN AUTH STORAGE
 # ==================================================
 
 oauth_state = None
@@ -50,19 +50,42 @@ linkedin_member_id = None
 # ==================================================
 # MCP SERVER
 # ==================================================
+#
+# IMPORTANT:
+# Render exposes this server through:
+#
+# https://linkedin-growth-mcp.onrender.com
+#
+# MCP's DNS rebinding protection requires the public
+# hostname to be explicitly allowed.
+#
+
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        "localhost:*",
+        "127.0.0.1:*",
+        "linkedin-growth-mcp.onrender.com",
+        "linkedin-growth-mcp.onrender.com:*",
+    ],
+)
+
 
 mcp = FastMCP(
     "LinkedIn Growth MCP",
+
     instructions=(
         "A LinkedIn growth assistant that helps create and publish "
         "professional LinkedIn content. Never expose authentication "
         "credentials or access tokens."
     ),
+
+    transport_security=transport_security,
 )
 
 
 # ==================================================
-# BASIC MCP STATUS TOOL
+# BASIC STATUS TOOL
 # ==================================================
 
 @mcp.tool()
@@ -117,7 +140,7 @@ def linkedin_auth_status() -> dict:
 
 
 # ==================================================
-# PUBLISH LINKEDIN POST
+# CREATE / PUBLISH LINKEDIN POST
 # ==================================================
 
 @mcp.tool()
@@ -182,10 +205,13 @@ async def linkedin_create_post(text: str) -> dict:
 
 
 # ==================================================
-# LINKEDIN LOGIN ROUTE
+# LINKEDIN LOGIN
 # ==================================================
 
-@mcp.custom_route("/auth/linkedin", methods=["GET"])
+@mcp.custom_route(
+    "/auth/linkedin",
+    methods=["GET"],
+)
 async def linkedin_login(request: Request):
 
     global oauth_state
@@ -209,7 +235,7 @@ async def linkedin_login(request: Request):
 
 
 # ==================================================
-# LINKEDIN CALLBACK ROUTE
+# LINKEDIN OAUTH CALLBACK
 # ==================================================
 
 @mcp.custom_route(
@@ -227,6 +253,7 @@ async def linkedin_callback(request: Request):
     state = request.query_params.get("state")
 
     error = request.query_params.get("error")
+
 
     # ----------------------------------------------
     # LinkedIn returned an error
@@ -246,6 +273,7 @@ async def linkedin_callback(request: Request):
             status_code=400,
         )
 
+
     # ----------------------------------------------
     # Check authorization code
     # ----------------------------------------------
@@ -262,6 +290,7 @@ async def linkedin_callback(request: Request):
             """,
             status_code=400,
         )
+
 
     # ----------------------------------------------
     # Check OAuth state
@@ -281,8 +310,10 @@ async def linkedin_callback(request: Request):
             status_code=400,
         )
 
+
     # ----------------------------------------------
-    # Exchange authorization code for access token
+    # Exchange authorization code
+    # for LinkedIn access token
     # ----------------------------------------------
 
     token_data = {
@@ -293,12 +324,14 @@ async def linkedin_callback(request: Request):
         "client_secret": LINKEDIN_CLIENT_SECRET,
     }
 
+
     async with httpx.AsyncClient(timeout=30) as client:
 
         token_response = await client.post(
             LINKEDIN_TOKEN_URL,
             data=token_data,
         )
+
 
         if token_response.status_code != 200:
 
@@ -314,11 +347,14 @@ async def linkedin_callback(request: Request):
                 status_code=400,
             )
 
+
         token_json = token_response.json()
+
 
         linkedin_access_token = token_json.get(
             "access_token"
         )
+
 
         if not linkedin_access_token:
 
@@ -333,6 +369,7 @@ async def linkedin_callback(request: Request):
                 status_code=400,
             )
 
+
         # ------------------------------------------
         # Get LinkedIn member information
         # ------------------------------------------
@@ -345,6 +382,7 @@ async def linkedin_callback(request: Request):
                 ),
             },
         )
+
 
         if userinfo_response.status_code != 200:
 
@@ -360,9 +398,12 @@ async def linkedin_callback(request: Request):
                 status_code=400,
             )
 
+
         userinfo = userinfo_response.json()
 
+
     linkedin_member_id = userinfo.get("sub")
+
 
     # ----------------------------------------------
     # Successful connection
@@ -400,7 +441,10 @@ async def linkedin_callback(request: Request):
 # HOME / HEALTH ROUTE
 # ==================================================
 
-@mcp.custom_route("/", methods=["GET"])
+@mcp.custom_route(
+    "/",
+    methods=["GET"],
+)
 async def home(request: Request):
 
     return HTMLResponse(
